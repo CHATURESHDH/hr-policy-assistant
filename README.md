@@ -2,7 +2,7 @@
 
 An AI agent–powered application that lets users upload HR policy documents (PDF, TXT, CSV, Excel) and ask natural-language questions about them. The system uses Retrieval-Augmented Generation (RAG) and a lightweight agentic layer (planning, tool-use, validation) to produce grounded, hallucination-resistant answers.
 
-**Live App:** [https://hr-policy-assistant-nxtjjc8yspjke5kqffecjx.streamlit.app/]
+**Live App:** [PASTE YOUR STREAMLIT CLOUD URL HERE]
 **GitHub Repo:** https://github.com/CHATURESHDH/hr-policy-assistant
 
 ---
@@ -58,7 +58,7 @@ A user uploads a document, the system processes and indexes it, and the user can
 ```
 
 **LLM Provider:** Groq API (model: `openai/gpt-oss-20b`)
-**Embedding Model:** `all-MiniLM-L6-v2` (SentenceTransformers, runs locally, free)
+**Embedding Model:** `all-MiniLM-L6-v2` (SentenceTransformers, sourced from Hugging Face Hub, runs locally, free)
 **Vector Database:** ChromaDB (in-memory / ephemeral client)
 
 ---
@@ -98,7 +98,7 @@ This planner → retriever/generator → validator flow satisfies the "agent-bas
 | UI / App framework | Streamlit |
 | LLM | Groq API (`openai/gpt-oss-20b`) |
 | Orchestration (chunking) | LangChain (`langchain-text-splitters`) |
-| Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`) |
+| Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`, sourced from Hugging Face Hub) |
 | Vector store | ChromaDB |
 | Document parsing | pdfplumber (PDF), pandas (CSV/Excel), native (TXT) |
 | Language | Python 3.12 |
