@@ -24,6 +24,7 @@ if "chroma_client" not in st.session_state:
     st.session_state.chroma_client = chromadb.EphemeralClient()
     st.session_state.collection = None
     st.session_state.chat_history = []
+    st.session_state.last_processed_file = None
 
 # ===== CORE FUNCTIONS =====
 
@@ -206,14 +207,21 @@ uploaded_file = st.file_uploader(
     type=["pdf", "txt", "csv", "xlsx", "xls"]
 )
 
-if uploaded_file is not None and st.session_state.collection is None:
-    with st.spinner("Processing document..."):
-        text = extract_text(uploaded_file)
-        num_chunks = process_document(text, uploaded_file.name)
-    st.success(f"Document processed into {num_chunks} chunks. You can now ask questions.")
-
-if uploaded_file is not None and st.session_state.collection is not None:
-    st.info("Document loaded. Ask a question below, or upload a new document to replace it.")
+if uploaded_file is not None:
+    # Check if this is a DIFFERENT file than the one already processed.
+    # This fixes the bug where uploading a second file didn't actually
+    # reprocess it, since the app only checked "is a file uploaded?"
+    # instead of "is this a NEW file?"
+    if uploaded_file.name != st.session_state.last_processed_file:
+        with st.spinner("Processing document..."):
+            text = extract_text(uploaded_file)
+            num_chunks = process_document(text, uploaded_file.name)
+        st.session_state.last_processed_file = uploaded_file.name
+        # Clear chat history since we're now working with a new document
+        st.session_state.chat_history = []
+        st.success(f"Document processed into {num_chunks} chunks. You can now ask questions.")
+    else:
+        st.info("Document loaded. Ask a question below, or upload a new document to replace it.")
 
 # --- Chat section ---
 for msg in st.session_state.chat_history:
