@@ -7,6 +7,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 import chromadb
 from groq import Groq
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
 
 # ===== SETUP (runs once) =====
 load_dotenv()
@@ -26,7 +28,7 @@ if "chroma_client" not in st.session_state:
     st.session_state.chat_history = []
     st.session_state.last_processed_file = None
 
-# ===== CORE FUNCTIONS =====
+# ===== DOCUMENT EXTRACTION FUNCTIONS =====
 
 def extract_text_from_pdf(uploaded_file):
     """Extract all text from an uploaded PDF file."""
@@ -50,12 +52,9 @@ def dataframe_to_sentences(df):
     """
     sentences = []
     columns = df.columns.tolist()
-
     for _, row in df.iterrows():
-        # Build a sentence like: "Date: 2026-10-20, Day: Tuesday, Holiday Name: Diwali, Type: Public Holiday"
         row_text = ", ".join([f"{col}: {row[col]}" for col in columns])
         sentences.append(row_text)
-
     return "\n".join(sentences)
 
 def extract_text_from_csv(uploaded_file):
@@ -73,7 +72,6 @@ def extract_text_from_excel(uploaded_file):
 def extract_text(uploaded_file):
     """Detect file type and route to the correct extraction function."""
     file_name = uploaded_file.name.lower()
-
     if file_name.endswith(".pdf"):
         return extract_text_from_pdf(uploaded_file)
     elif file_name.endswith(".txt"):
@@ -89,10 +87,8 @@ def process_document(text, doc_name):
     """Chunk text, embed it, and store it in the vector database."""
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = splitter.split_text(text)
-
     embeddings = embedding_model.encode(chunks)
 
-    # Create a fresh collection each time a new document is processed
     try:
         st.session_state.chroma_client.delete_collection("hr_docs")
     except Exception:
@@ -107,8 +103,25 @@ def process_document(text, doc_name):
     st.session_state.collection = collection
     return len(chunks)
 
-def plan_action(question):
-    """Decide whether a question needs document retrieval or a direct reply."""
+# ===== LANGGRAPH AGENT =====
+# We model the agent as a graph with 4 nodes:
+#   planner -> (router decides RETRIEVE or DIRECT)
+#   retrieve_node -> generate_node -> validate_node -> END   (RETRIEVE path)
+#   direct_node -> END                                        (DIRECT path)
+
+class AgentState(TypedDict):
+    """
+    This defines the 'shared memory' that flows through the graph.
+    Every node can read from and write to this state.
+    """
+    question: str
+    decision: str
+    context: str
+    answer: str
+    is_valid: bool
+
+def planner_node(state: AgentState) -> AgentState:
+    """Node 1: Decide whether the question needs document retrieval or a direct reply."""
     planning_prompt = f"""You are a planning agent. Decide how to handle this user message.
 
 If the message is a greeting, small talk, or doesn't require looking up HR policy
@@ -117,7 +130,7 @@ information, respond with exactly: DIRECT
 If the message is a genuine question about HR policy, leave, benefits, or company rules,
 respond with exactly: RETRIEVE
 
-Message: "{question}"
+Message: "{state['question']}"
 
 Respond with ONLY one word: DIRECT or RETRIEVE"""
 
@@ -125,46 +138,39 @@ Respond with ONLY one word: DIRECT or RETRIEVE"""
         model="openai/gpt-oss-20b",
         messages=[{"role": "user", "content": planning_prompt}]
     )
-    return response.choices[0].message.content.strip().upper()
+    decision = response.choices[0].message.content.strip().upper()
+    state["decision"] = decision
+    return state
 
-def validate_answer(question, context, answer):
-    """Check whether the answer is actually supported by the retrieved context."""
-    validation_prompt = f"""You are a fact-checker. Determine if the ANSWER below is
-reasonably supported by the CONTEXT (it doesn't need to be word-for-word, just
-factually consistent). Reply with only YES or NO.
+def route_after_planner(state: AgentState) -> str:
+    """
+    This is a 'conditional edge' - it looks at the state and decides
+    which node to go to next: 'retrieve' or 'direct'.
+    """
+    if state["decision"] == "DIRECT":
+        return "direct"
+    return "retrieve"
 
-Context:
-{context}
-
-Question: {question}
-Answer: {answer}
-
-Is the answer reasonably supported by the context? Reply with only YES or NO."""
-
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[{"role": "user", "content": validation_prompt}]
-    )
-    return "YES" in response.choices[0].message.content.strip().upper()
-
-def ask_hr_policy(question):
-    """Full RAG pipeline: retrieve relevant chunks, generate an answer, validate it."""
-    query_embedding = embedding_model.encode([question])
-
+def retrieve_node(state: AgentState) -> AgentState:
+    """Node 2 (RETRIEVE path): Search the vector store for relevant chunks."""
+    query_embedding = embedding_model.encode([state["question"]])
     results = st.session_state.collection.query(
         query_embeddings=query_embedding.tolist(),
         n_results=5
     )
     retrieved_chunks = results['documents'][0]
-    context = "\n\n".join(retrieved_chunks)
+    state["context"] = "\n\n".join(retrieved_chunks)
+    return state
 
+def generate_node(state: AgentState) -> AgentState:
+    """Node 3 (RETRIEVE path): Generate a grounded answer using the retrieved context."""
     prompt = f"""You are an HR policy assistant. Answer the question using ONLY the context below.
 If the answer isn't in the context, say "This isn't covered in the provided policy documents."
 
 Context:
-{context}
+{state['context']}
 
-Question: {question}
+Question: {state['question']}
 
 Answer:"""
 
@@ -172,28 +178,116 @@ Answer:"""
         model="openai/gpt-oss-20b",
         messages=[{"role": "user", "content": prompt}]
     )
-    answer = response.choices[0].message.content
+    state["answer"] = response.choices[0].message.content
+    return state
 
-    is_valid = validate_answer(question, context, answer)
+def validate_node(state: AgentState) -> AgentState:
+    """Node 4 (RETRIEVE path): Check the answer is actually supported by the context."""
+    validation_prompt = f"""You are a fact-checker. Determine if the ANSWER below is
+reasonably supported by the CONTEXT (it doesn't need to be word-for-word, just
+factually consistent). Reply with only YES or NO.
+
+Context:
+{state['context']}
+
+Question: {state['question']}
+Answer: {state['answer']}
+
+Is the answer reasonably supported by the context? Reply with only YES or NO."""
+
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[{"role": "user", "content": validation_prompt}]
+    )
+    is_valid = "YES" in response.choices[0].message.content.strip().upper()
+    state["is_valid"] = is_valid
+
     if not is_valid:
-        return "I found some related information, but I'm not confident it fully answers your question. Please verify with HR directly."
-    return answer
+        state["answer"] = "I found some related information, but I'm not confident it fully answers your question. Please verify with HR directly."
+
+    return state
+
+def direct_node(state: AgentState) -> AgentState:
+    """Node (DIRECT path): Handle greetings/small talk without document lookup."""
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[
+            {"role": "system", "content": "You are a friendly HR assistant chatbot."},
+            {"role": "user", "content": state["question"]}
+        ]
+    )
+    state["answer"] = response.choices[0].message.content
+    return state
+
+def build_agent_graph():
+    """
+    Build the LangGraph StateGraph wiring all nodes together:
+
+                        ┌─────────┐
+                        │ planner │
+                        └────┬────┘
+                             │ (conditional route)
+                 ┌───────────┴───────────┐
+                 ▼                       ▼
+           ┌──────────┐             ┌────────┐
+           │ retrieve │             │ direct │
+           └────┬─────┘             └───┬────┘
+                ▼                       │
+           ┌──────────┐                 │
+           │ generate │                 │
+           └────┬─────┘                 │
+                ▼                       │
+           ┌──────────┐                 │
+           │ validate │                 │
+           └────┬─────┘                 │
+                ▼                       ▼
+               END                     END
+    """
+    graph = StateGraph(AgentState)
+
+    graph.add_node("planner", planner_node)
+    graph.add_node("retrieve", retrieve_node)
+    graph.add_node("generate", generate_node)
+    graph.add_node("validate", validate_node)
+    graph.add_node("direct", direct_node)
+
+    graph.set_entry_point("planner")
+
+    # Conditional branching after the planner decides
+    graph.add_conditional_edges(
+        "planner",
+        route_after_planner,
+        {"retrieve": "retrieve", "direct": "direct"}
+    )
+
+    # RETRIEVE path: retrieve -> generate -> validate -> END
+    graph.add_edge("retrieve", "generate")
+    graph.add_edge("generate", "validate")
+    graph.add_edge("validate", END)
+
+    # DIRECT path: direct -> END
+    graph.add_edge("direct", END)
+
+    return graph.compile()
+
+# Compile the graph once (cached so it isn't rebuilt on every rerun)
+@st.cache_resource
+def get_agent():
+    return build_agent_graph()
+
+agent = get_agent()
 
 def smart_assistant(question):
-    """The full agent flow: plan -> retrieve or direct -> respond."""
-    decision = plan_action(question)
-
-    if decision == "DIRECT":
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[
-                {"role": "system", "content": "You are a friendly HR assistant chatbot."},
-                {"role": "user", "content": question}
-            ]
-        )
-        return response.choices[0].message.content
-    else:
-        return ask_hr_policy(question)
+    """Run the LangGraph agent on a question and return the final answer."""
+    initial_state = {
+        "question": question,
+        "decision": "",
+        "context": "",
+        "answer": "",
+        "is_valid": False
+    }
+    final_state = agent.invoke(initial_state)
+    return final_state["answer"]
 
 # ===== STREAMLIT UI =====
 
@@ -208,16 +302,11 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Check if this is a DIFFERENT file than the one already processed.
-    # This fixes the bug where uploading a second file didn't actually
-    # reprocess it, since the app only checked "is a file uploaded?"
-    # instead of "is this a NEW file?"
     if uploaded_file.name != st.session_state.last_processed_file:
         with st.spinner("Processing document..."):
             text = extract_text(uploaded_file)
             num_chunks = process_document(text, uploaded_file.name)
         st.session_state.last_processed_file = uploaded_file.name
-        # Clear chat history since we're now working with a new document
         st.session_state.chat_history = []
         st.success(f"Document processed into {num_chunks} chunks. You can now ask questions.")
     else:
