@@ -21,7 +21,7 @@ embedding_model = load_embedding_model()
 
 # Create a fresh in-memory Chroma client each session
 if "chroma_client" not in st.session_state:
-    st.session_state.chroma_client = chromadb.Client()
+    st.session_state.chroma_client = chromadb.EphemeralClient()
     st.session_state.collection = None
     st.session_state.chat_history = []
 
