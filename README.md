@@ -2,7 +2,7 @@
 
 An AI agent–powered application that lets users upload HR policy documents (PDF, TXT, CSV, Excel) and ask natural-language questions about them. The system uses Retrieval-Augmented Generation (RAG) and a lightweight agentic layer (planning, tool-use, validation) to produce grounded, hallucination-resistant answers.
 
-**Live App:** [PASTE YOUR STREAMLIT CLOUD URL HERE]
+**Live App:** [https://hr-policy-assistant-nxtjjc8yspjke5kqffecjx.streamlit.app/]
 **GitHub Repo:** https://github.com/CHATURESHDH/hr-policy-assistant
 
 ---
