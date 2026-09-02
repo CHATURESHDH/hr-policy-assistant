@@ -1,0 +1,32 @@
+ACME CORPORATION - NEW EMPLOYEE ONBOARDING FAQ
+Effective: January 2026
+
+Q1: When will I receive my laptop and equipment?
+A: IT will issue your laptop, headset, and access badge on your first day. If you are joining remotely, equipment is couriered to your registered address at least 3 days before your joining date.
+
+Q2: How do I set up my company email and Slack account?
+A: Your company email (firstname.lastname@acmecorp.example) is created automatically 24 hours before your joining date. Login credentials are sent to your personal email. Slack workspace invites follow within the first 2 hours of your first day.
+
+Q3: What is covered in the first week of onboarding?
+A: Week 1 includes: HR orientation session, IT systems setup, introduction to your reporting manager and team, mandatory compliance training (Code of Conduct, POSH, Data Security), and a benefits enrollment walkthrough.
+
+Q4: When do my benefits (insurance, etc.) start?
+A: Health insurance coverage begins from your date of joining. You must complete benefits enrollment through the HR portal within the first 15 days, or default coverage will be applied automatically.
+
+Q5: Who do I contact if I face any onboarding issues?
+A: Reach out to your assigned HR buddy (introduced on Day 1) or email onboarding@acmecorp.example. For urgent IT issues, contact the IT helpdesk at extension 4040.
+
+Q6: Is there a probation period?
+A: Yes, all new employees undergo a 6-month probation period as outlined in the Employee Leave and Time-Off Policy. Your manager will conduct a formal review before confirmation.
+
+Q7: How do I apply for leave during probation?
+A: You may apply for casual and sick leave on a pro-rata basis during probation via the HR portal. Earned leave encashment is not available until after confirmation.
+
+Q8: What is the reporting structure I should know on Day 1?
+A: You will report directly to the hiring manager communicated in your offer letter. Org charts are available on the internal HR portal under "My Team."
+
+Q9: When is the first salary credited?
+A: Salaries are processed on the last working day of each month. If you join mid-month, your first salary will be pro-rated based on your joining date.
+
+Q10: Where can I find the complete list of company policies?
+A: All HR policies, including Leave Policy, Code of Conduct, and Expense Policy, are available on the HR portal under "Policies & Documents."
