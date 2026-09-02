@@ -2,7 +2,7 @@
 
 An AI agent–powered application that lets users upload HR policy documents (PDF, TXT, CSV, Excel) and ask natural-language questions about them. The system uses Retrieval-Augmented Generation (RAG) and a lightweight agentic layer (planning, tool-use, validation) to produce grounded, hallucination-resistant answers.
 
-**Live App:** [https://hr-policy-assistant-nxtjjc8yspjke5kqffecjx.streamlit.app/]
+**Live App:** [PASTE YOUR STREAMLIT CLOUD URL HERE]
 **GitHub Repo:** https://github.com/CHATURESHDH/hr-policy-assistant
 
 ---
@@ -35,21 +35,29 @@ A user uploads a document, the system processes and indexes it, and the user can
 │  5. Storage (ChromaDB - in-memory vector store)  │
 └────────┬────────────────────────────────────────┘
          │
-┌────────▼──────────────────────────────────────┐
-│                 AGENT LAYER                     │
-│                                                  │
-│  ┌────────────┐   ┌─────────────┐  ┌─────────┐ │
-│  │  Planner    │──▶│  Retriever  │─▶│Generator│ │
-│  │ (DIRECT vs  │   │ (similarity │  │  (LLM)  │ │
-│  │  RETRIEVE)  │   │   search)   │  │         │ │
-│  └────────────┘   └─────────────┘  └────┬────┘ │
-│                                          │       │
-│                                    ┌─────▼────┐  │
-│                                    │Validator │  │
-│                                    │(grounded │  │
-│                                    │ check)   │  │
-│                                    └─────┬────┘  │
-└──────────────────────────────────────────┼──────┘
+┌────────▼──────────────────────────────────────────┐
+│         AGENT LAYER — LangGraph StateGraph          │
+│                                                      │
+│                    ┌──────────┐                     │
+│                    │ planner  │                     │
+│                    └────┬─────┘                     │
+│                         │ (conditional edge)         │
+│              ┌──────────┴──────────┐                │
+│              ▼                     ▼                │
+│        ┌──────────┐          ┌──────────┐           │
+│        │ retrieve │          │  direct  │           │
+│        └────┬─────┘          └────┬─────┘           │
+│             ▼                     │                  │
+│        ┌──────────┐               │                  │
+│        │ generate │               │                  │
+│        └────┬─────┘               │                  │
+│             ▼                     │                  │
+│        ┌──────────┐               │                  │
+│        │ validate │               │                  │
+│        └────┬─────┘               │                  │
+│              ▼                    ▼                  │
+│                        END                           │
+└──────────────────────────────────────────────────────┘
                                             │
                                     ┌───────▼──────┐
                                     │ Final Answer  │
@@ -60,20 +68,23 @@ A user uploads a document, the system processes and indexes it, and the user can
 **LLM Provider:** Groq API (model: `openai/gpt-oss-20b`)
 **Embedding Model:** `all-MiniLM-L6-v2` (SentenceTransformers, sourced from Hugging Face Hub, runs locally, free)
 **Vector Database:** ChromaDB (in-memory / ephemeral client)
+**Agent Orchestration:** LangGraph `StateGraph` — the planner, retriever, generator, validator, and direct-reply handler are implemented as graph nodes connected by explicit (including conditional) edges, with a shared `AgentState` object carrying data between them.
 
 ---
 
 ## 3. Agent Roles
 
-The system implements three cooperating agent components rather than a single fixed retrieve-then-generate pipeline:
+The agent is implemented as a **LangGraph `StateGraph`** with five nodes and a conditional edge, rather than a single fixed retrieve-then-generate pipeline. A shared `AgentState` (question, decision, context, answer, validity flag) flows through the graph as it executes.
 
-| Agent | Responsibility |
+| Node | Responsibility |
 |---|---|
-| **Planner** | Reads the incoming user message and classifies it as `DIRECT` (greeting/small talk — no document lookup needed) or `RETRIEVE` (a genuine policy question requiring document search). This avoids unnecessary retrieval calls and lets the assistant hold normal conversation. |
-| **Retriever + Generator** | For `RETRIEVE`-classified questions: embeds the question, performs similarity search against the vector store to fetch the top-k most relevant chunks, and passes them as grounding context to the LLM, which generates an answer using only that context. |
-| **Validator** | After an answer is generated, a separate LLM call checks whether the answer is actually supported by the retrieved context. If not, the system returns a safe fallback message instead of a potentially hallucinated answer. |
+| **planner** | Reads the incoming user message and classifies it as `DIRECT` (greeting/small talk — no document lookup needed) or `RETRIEVE` (a genuine policy question requiring document search). A conditional edge (`route_after_planner`) routes execution to the appropriate branch based on this decision. |
+| **retrieve** | (RETRIEVE branch) Embeds the question and performs similarity search against the vector store to fetch the top-k most relevant chunks, storing them in `state["context"]`. |
+| **generate** | (RETRIEVE branch) Passes the retrieved context and question to the LLM, which generates an answer grounded only in that context. |
+| **validate** | (RETRIEVE branch) A separate LLM call checks whether the generated answer is actually supported by the retrieved context. If not, the state's answer is overwritten with a safe fallback message before reaching `END`. |
+| **direct** | (DIRECT branch) Handles greetings/small talk conversationally, without touching the vector store. |
 
-This planner → retriever/generator → validator flow satisfies the "agent-based reasoning" requirement: the system plans its approach, uses a retrieval tool conditionally, and reflects on its own output before returning it.
+This graph-based planner → retrieve → generate → validate flow (with a separate direct-reply branch) satisfies the "agent-based reasoning" requirement: the system plans its approach, conditionally uses a retrieval tool, and reflects on its own output before returning it — all made explicit through LangGraph's node/edge structure rather than implicit function calls.
 
 ---
 
@@ -97,7 +108,8 @@ This planner → retriever/generator → validator flow satisfies the "agent-bas
 |---|---|
 | UI / App framework | Streamlit |
 | LLM | Groq API (`openai/gpt-oss-20b`) |
-| Orchestration (chunking) | LangChain (`langchain-text-splitters`) |
+| Chunking | LangChain (`langchain-text-splitters`) |
+| Agent orchestration | LangGraph (`StateGraph`, conditional edges) |
 | Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`, sourced from Hugging Face Hub) |
 | Vector store | ChromaDB |
 | Document parsing | pdfplumber (PDF), pandas (CSV/Excel), native (TXT) |
@@ -191,6 +203,8 @@ These are used purely as test data. The system is designed to work with any HR p
 - **Poor retrieval quality on tabular data**: raw `DataFrame.to_string()` output (column-aligned whitespace) produced poor embeddings for CSV/Excel data; fixed by converting each row into a natural-language sentence (`"Column: value, Column: value..."`) before chunking and embedding.
 - **Validator logic bug**: an f-string was accidentally written as a plain string, so the validator's prompt template never actually inserted the retrieved context — causing it to reject valid, well-grounded answers. Identified through systematic debugging (isolating retrieval vs. generation vs. validation) and fixed by correcting the string prefix.
 - **ChromaDB incompatibility with Streamlit Cloud**: `chromadb.Client()` raised a `KeyError` in the Streamlit Cloud environment due to a client-caching quirk; resolved by switching to `chromadb.EphemeralClient()`.
+- **Document-switching bug**: uploading a second document without refreshing the page didn't reprocess it, because the app only checked whether *a* file was uploaded rather than whether a *new* file was uploaded; fixed by tracking the last processed filename in session state and comparing it against each new upload.
+- **Refactor to LangGraph**: the agent logic was initially implemented as plain Python functions with `if/else` branching. It was later refactored into a formal LangGraph `StateGraph` (with explicit nodes, a shared `AgentState`, and a conditional edge for planner routing) to make the agent architecture more standardized, explicit, and easier to extend with additional nodes in the future.
 
 ---
 
